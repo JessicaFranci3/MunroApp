@@ -1,9 +1,11 @@
-# Use official Playwright base image based on Ubuntu Jammy
 FROM mcr.microsoft.com/playwright:v1.42.0-jammy
 
 WORKDIR /app
 
-# Install build essentials required to compile native C++ modules like sqlite3
+# Force native modules (like sqlite3) to compile from source instead of downloading prebuilt binaries
+ENV npm_config_build_from_source=true
+
+# Install build tools required for compilation
 RUN apt-get update && apt-get install -y \
     python3 \
     make \
@@ -13,14 +15,14 @@ RUN apt-get update && apt-get install -y \
 # Copy package manifests
 COPY package*.json ./
 
-# Clean install dependencies (native scripts will run automatically with build tools ready)
-RUN npm ci
+# Install dependencies (will now compile sqlite3 locally using Jammy's libraries)
+RUN npm install
 
-# Copy remaining source code
+# Copy application code
 COPY . .
 
 # Expose port
 EXPOSE 3000
 
-# Start application
+# Start server
 CMD ["node", "server.js"]

@@ -1,16 +1,18 @@
-# Use official Playwright base image based on Ubuntu Jammy
+# Use official Playwright base image
 FROM mcr.microsoft.com/playwright:v1.42.0-jammy
 
 WORKDIR /app
 
-# Copy package manifests and install node dependencies
+# Copy package files
 COPY package*.json ./
-RUN npm ci
 
-# Copy the rest of the application code
+# Clean install dependencies and force re-compiling native modules like sqlite3 inside Jammy
+RUN npm ci --build-from-source sqlite3
+
+# Copy application files
 COPY . .
 
-# Expose server port
+# Expose port
 EXPOSE 3000
 
 # Start server

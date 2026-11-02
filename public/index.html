@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Munro Tracker Map Dashboard</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body, html { height: 100%; width: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+
+        #map { height: 100vh; width: 100vw; z-index: 1; }
+
+        .sidebar {
+            position: absolute; top: 0; left: 0; width: 380px; height: 100vh;
+            background: rgba(255, 255, 255, 0.96); backdrop-filter: blur(8px);
+            z-index: 1000; box-shadow: 2px 0 12px rgba(0,0,0,0.15);
+            transition: transform 0.3s ease; display: flex; flex-direction: column;
+        }
+        .sidebar.collapsed { transform: translateX(-380px); }
+
+        .sidebar-toggle {
+            position: absolute; top: 20px; right: -40px; width: 40px; height: 40px;
+            background: white; border: 1px solid #ccc; border-left: none; border-radius: 0 8px 8px 0;
+            cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem;
+            box-shadow: 2px 0 6px rgba(0,0,0,0.1); z-index: 1001;
+        }
+
+        .sidebar-header { padding: 20px; border-bottom: 1px solid #e1e4e8; background: #f8f9fa; }
+        .sidebar-content { padding: 20px; overflow-y: auto; flex: 1; }
+
+        .card { background: white; padding: 15px; border-radius: 8px; border: 1px solid #e1e4e8; margin-bottom: 16px; }
+        
+        .user-item {
+            border: 2px solid #e1e4e8; padding: 12px; border-radius: 6px; background: #fff;
+            margin-bottom: 10px; cursor: pointer; transition: all 0.2s ease;
+            display: flex; gap: 10px; align-items: flex-start;
+        }
+        .user-item:hover { border-color: #0366d6; background: #f1f8fc; }
+        .user-item.selected { border-color: #0366d6; background: #f0f7ff; }
+
+        .user-checkbox { margin-top: 3px; width: 18px; height: 18px; cursor: pointer; }
+
+        .progress-bg { background: #e1e4e8; border-radius: 4px; height: 8px; width: 100%; overflow: hidden; margin-top: 8px; }
+        .progress-fill { background: #2ea44f; height: 100%; transition: width 0.3s ease; }
+
+        .btn { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
+        .btn-primary { background: #2ea44f; color: white; width: 100%; }
+        .btn-sync { background: #0366d6; color: white; }
+        .btn-danger { background: #d73a49; color: white; }
+
+        .legend {
+            background: white; padding: 12px; border-radius: 6px; border: 1px solid #e1e4e8;
+            font-size: 0.85rem; display: flex; flex-direction: column; gap: 8px; margin-top: 20px;
+        }
+        .legend-item { display: flex; align-items: center; gap: 8px; }
+        .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; border: 1px solid rgba(0,0,0,0.2); }
+    </style>
+</head>
+<body>
+
+    <div class="sidebar" id="sidebar">
+        <button class="sidebar-toggle" id="toggleBtn" onclick="toggleSidebar()">◀</button>
+        
+        <div class="sidebar-header">
+            <h2>🏔️ Munro Baggers</h2>
+            <p style="font-size: 0.85rem; color: #666;">Select 2 people for head-to-head comparison</p>
+        </div>
+
+        <div class="sidebar-content">
+            <!-- Add User Form -->
+            <div class="card">
+                <h4 style="margin-bottom: 10px;">Add Person</h4>
+                <form id="addUserForm" style="display: flex; flex-direction: column; gap: 8px;">
+                    <input type="text" id="userName" placeholder="Name" required style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                    <input type="text" id="whId" placeholder="Walkhighlands ID" required style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                    <button type="submit" class="btn btn-primary" style="margin-top: 4px;">Add User</button>
+                </form>
+                <p id="userMessage" style="margin-top: 8px; font-size: 0.8rem;"></p>
+            </div>
+
+            <!-- Leaderboard List -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h4>Leaderboard</h4>
+                <div style="font-size: 0.8rem; color: #0366d6; cursor: pointer;" onclick="toggleSelectAll()">Select All / Clear</div>
+            </div>
+            <div id="usersList">Loading users...</div>
+
+            <!-- Dynamic Map Legend -->
+            <div class="legend" id="legendContainer">
+                <strong>Map Legend</strong>
+                <div class="legend-item"><span class="dot" style="background: #2ea44f;"></span> <b>Green:</b> Nobody has completed</div>
+                <div class="legend-item"><span class="dot" style="background: #eab308;"></span> <b>Yellow:</b> Some completed</div>
+                <div class="legend-item"><span class="dot" style="background: #9ca3af;"></span> <b>Grey:</b> Everyone completed</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Fullscreen Map -->
+    <div id="map"></div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        const map = L.map('map').setView([56.8169, -4.1826], 7);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 18,
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        let markersLayer = L.layerGroup().addTo(map);
+        let selectedUserIds = new Set();
+        let allUsers = [];
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const toggleBtn = document.getElementById('toggleBtn');
+            sidebar.classList.toggle('collapsed');
+            toggleBtn.textContent = sidebar.classList.contains('collapsed') ? '▶' : '◀';
+        }
+
+        async function loadUsers() {
+            const container = document.getElementById('usersList');
+            try {
+                const response = await fetch('/users');
+                const result = await response.json();
+                
+                if (!result.success || result.data.length === 0) {
+                    container.innerHTML = '<p style="color: #666; font-size: 0.9em;">No users added yet.</p>';
+                    markersLayer.clearLayers();
+                    return;
+                }
+
+                allUsers = result.data;
+
+                if (selectedUserIds.size === 0 && allUsers.length > 0) {
+                    selectedUserIds.add(allUsers[0].id);
+                }
+
+                renderUsersList();
+                updateComparisonMap();
+            } catch (err) {
+                container.innerHTML = '<p style="color: red; font-size: 0.9em;">Failed to load users.</p>';
+            }
+        }
+
+        function renderUsersList() {
+            const container = document.getElementById('usersList');
+            let html = '';
+
+            for (const user of allUsers) {
+                const percent = Math.round((user.completed_count / user.total_munros) * 100) || 0;
+                const isChecked = selectedUserIds.has(user.id);
+                const isSelectedClass = isChecked ? 'selected' : '';
+                
+                html += `
+                    <div class="user-item ${isSelectedClass}" onclick="toggleUserSelection(${user.id})">
+                        <input type="checkbox" class="user-checkbox" ${isChecked ? 'checked' : ''} onclick="event.stopPropagation(); toggleUserSelection(${user.id})">
+                        <div style="flex: 1;">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <strong>${user.name}</strong>
+                                <span style="font-size: 0.85em; color: #555;">${user.completed_count} / ${user.total_munros} (${percent}%)</span>
+                            </div>
+                            <div class="progress-bg">
+                                <div class="progress-fill" style="width: ${percent}%;"></div>
+                            </div>
+                            <div style="display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px;">
+                                <button onclick="event.stopPropagation(); syncUser(${user.id})" class="btn btn-sync">Sync</button>
+                                <button onclick="event.stopPropagation(); deleteUser(${user.id})" class="btn btn-danger">Remove</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            container.innerHTML = html;
+        }
+
+        function toggleUserSelection(userId) {
+            if (selectedUserIds.has(userId)) {
+                if (selectedUserIds.size > 1) {
+                    selectedUserIds.delete(userId);
+                }
+            } else {
+                selectedUserIds.add(userId);
+            }
+            renderUsersList();
+            updateComparisonMap();
+        }
+
+        function toggleSelectAll() {
+            if (selectedUserIds.size === allUsers.length) {
+                selectedUserIds.clear();
+                if (allUsers.length > 0) selectedUserIds.add(allUsers[0].id);
+            } else {
+                allUsers.forEach(u => selectedUserIds.add(u.id));
+            }
+            renderUsersList();
+            updateComparisonMap();
+        }
+
+        function updateLegend(mode, userNames = []) {
+            const legendEl = document.getElementById('legendContainer');
+            if (mode === 'head-to-head' && userNames.length === 2) {
+                const [u1, u2] = userNames;
+                legendEl.innerHTML = `
+                    <strong>Head-to-Head Legend</strong>
+                    <div class="legend-item"><span class="dot" style="background: #2ea44f;"></span> <b>Green:</b> Neither done</div>
+                    <div class="legend-item"><span class="dot" style="background: #0366d6;"></span> <b>Blue:</b> ${u1} only</div>
+                    <div class="legend-item"><span class="dot" style="background: #d97706;"></span> <b>Orange:</b> ${u2} only</div>
+                    <div class="legend-item"><span class="dot" style="background: #9ca3af;"></span> <b>Grey:</b> Both done</div>
+                `;
+            } else {
+                legendEl.innerHTML = `
+                    <strong>Map Legend</strong>
+                    <div class="legend-item"><span class="dot" style="background: #2ea44f;"></span> <b>Green:</b> Nobody completed</div>
+                    <div class="legend-item"><span class="dot" style="background: #eab308;"></span> <b>Yellow:</b> Some completed</div>
+                    <div class="legend-item"><span class="dot" style="background: #9ca3af;"></span> <b>Grey:</b> Everyone completed</div>
+                `;
+            }
+        }
+
+        async function updateComparisonMap() {
+            markersLayer.clearLayers();
+            if (selectedUserIds.size === 0) return;
+
+            const idsArray = Array.from(selectedUserIds);
+            const idsParam = idsArray.join(',');
+
+            // Get names for head-to-head legend
+            const activeNames = idsArray.map(id => {
+                const u = allUsers.find(user => user.id === id);
+                return u ? u.name : 'User';
+            });
+
+            try {
+                const response = await fetch(`/users/compare?ids=${idsParam}`);
+                const result = await response.json();
+
+                if (!result.success) return;
+
+                updateLegend(result.mode, activeNames);
+
+                for (const munro of result.data) {
+                    if (munro.lat && munro.lng) {
+                        let markerColor = '#2ea44f';
+                        let statusLabel = '';
+
+                        if (result.mode === 'head-to-head') {
+                            if (munro.status === 'both') {
+                                markerColor = '#9ca3af'; // Grey
+                                statusLabel = 'Completed by both';
+                            } else if (munro.status === 'u1_only') {
+                                markerColor = '#0366d6'; // Blue: User 1 only
+                                statusLabel = `Completed by ${activeNames[0]} only`;
+                            } else if (munro.status === 'u2_only') {
+                                markerColor = '#d97706'; // Orange: User 2 only
+                                statusLabel = `Completed by ${activeNames[1]} only`;
+                            } else {
+                                markerColor = '#2ea44f'; // Green: Neither
+                                statusLabel = 'Completed by neither';
+                            }
+                        } else {
+                            // Group mode
+                            if (munro.status === 'all') {
+                                markerColor = '#9ca3af';
+                                statusLabel = 'Completed by everyone selected';
+                            } else if (munro.status === 'some') {
+                                markerColor = '#eab308';
+                                statusLabel = 'Completed by some';
+                            } else {
+                                markerColor = '#2ea44f';
+                                statusLabel = 'Nobody completed';
+                            }
+                        }
+
+                        const customIcon = L.divIcon({
+                            className: 'custom-marker',
+                            html: `<div style="background-color: ${markerColor}; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 4px rgba(0,0,0,0.4);"></div>`,
+                            iconSize: [12, 12]
+                        });
+
+                        const marker = L.marker([munro.lat, munro.lng], { icon: customIcon });
+                        marker.bindPopup(`<b>${munro.name}</b><br>Area: ${munro.area}<br>Status: <b>${statusLabel}</b>`);
+                        markersLayer.addLayer(marker);
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to load map comparison:', err);
+            }
+        }
+
+        document.getElementById('addUserForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('userName').value;
+            const walkhighlands_id = document.getElementById('whId').value;
+            const messageEl = document.getElementById('userMessage');
+
+            const response = await fetch('/users', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, walkhighlands_id })
+            });
+            const result = await response.json();
+            
+            if (result.success) {
+                messageEl.style.color = 'green';
+                messageEl.textContent = result.message;
+                document.getElementById('addUserForm').reset();
+                loadUsers();
+            } else {
+                messageEl.style.color = 'red';
+                messageEl.textContent = result.error;
+            }
+        });
+
+        async function syncUser(id) {
+            alert('Syncing started in the background...');
+            const response = await fetch(`/users/${id}/sync`, { method: 'POST' });
+            const result = await response.json();
+            if (result.success) {
+                alert(result.message);
+                loadUsers();
+            } else {
+                alert('Sync failed: ' + result.error);
+            }
+        }
+
+        async function deleteUser(id) {
+            if (!confirm('Are you sure you want to remove this user?')) return;
+            await fetch(`/users/${id}`, { method: 'DELETE' });
+            selectedUserIds.delete(id);
+            loadUsers();
+        }
+
+        loadUsers();
+    </script>
+</body>
+</html>

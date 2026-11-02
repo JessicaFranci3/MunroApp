@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Munro Tracker Map Dashboard</title>
+    <link rel="icon" href="data:,">
     
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -92,7 +93,7 @@
             <!-- Dynamic Map Legend -->
             <div class="legend" id="legendContainer">
                 <strong>Map Legend</strong>
-                <div class="legend-item"><span class="dot" style="background: #2ea44f;"></span> <b>Green:</b> Nobody has completed</div>
+                <div class="legend-item"><span class="dot" style="background: #2ea44f;"></span> <b>Green:</b> Nobody completed</div>
                 <div class="legend-item"><span class="dot" style="background: #eab308;"></span> <b>Yellow:</b> Some completed</div>
                 <div class="legend-item"><span class="dot" style="background: #9ca3af;"></span> <b>Grey:</b> Everyone completed</div>
             </div>
@@ -106,22 +107,50 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
     <script>
-        const map = L.map('map').setView([56.8169, -4.1826], 7);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 18,
-            attribution: '&copy; OpenStreetMap contributors'
-        }).addTo(map);
-
-        let markersLayer = L.layerGroup().addTo(map);
+        // Global variables accessible across all functions
+        let map;
+        let markersLayer;
         let selectedUserIds = new Set();
         let allUsers = [];
 
+        // Sidebar Toggle
         function toggleSidebar() {
             const sidebar = document.getElementById('sidebar');
             const toggleBtn = document.getElementById('toggleBtn');
             sidebar.classList.toggle('collapsed');
             toggleBtn.textContent = sidebar.classList.contains('collapsed') ? '▶' : '◀';
         }
+
+        // Initialize Map & Start Data Load
+        fetch('/api/config')
+            .then(res => res.json())
+            .then(config => {
+                const container = L.DomUtil.get('map');
+                if (container != null && container._leaflet_id) {
+                    container._leaflet_id = null;
+                }
+
+                map = L.map('map').setView([56.8169, -4.1826], 7);
+
+                L.tileLayer(
+                    `https://api.os.uk/maps/raster/v1/zxy/Outdoor_3857/{z}/{x}/{y}.png?key=${config.osApiKey}`,
+                    {
+                        maxZoom: 20,
+                        subdomains: ['a', 'b', 'c', 'd'],
+                        attribution: '&copy; <a href="http://www.ordnancesurvey.co.uk/">Ordnance Survey</a>'
+                    }
+                ).addTo(map);
+
+                // Create and attach markers layer to map
+                markersLayer = L.layerGroup().addTo(map);
+
+                // NOW fetch users once map and markersLayer are ready
+                loadUsers();
+            })
+            .catch(err => {
+                console.error('Failed to load map configuration:', err);
+                document.getElementById('usersList').innerHTML = '<p style="color: red; font-size: 0.9em;">Failed to load map config.</p>';
+            });
 
         async function loadUsers() {
             const container = document.getElementById('usersList');
@@ -131,7 +160,7 @@
                 
                 if (!result.success || result.data.length === 0) {
                     container.innerHTML = '<p style="color: #666; font-size: 0.9em;">No users added yet.</p>';
-                    markersLayer.clearLayers();
+                    if (markersLayer) markersLayer.clearLayers();
                     return;
                 }
 
@@ -144,6 +173,7 @@
                 renderUsersList();
                 updateComparisonMap();
             } catch (err) {
+                console.error('Failed to load users:', err);
                 container.innerHTML = '<p style="color: red; font-size: 0.9em;">Failed to load users.</p>';
             }
         }
@@ -224,13 +254,13 @@
         }
 
         async function updateComparisonMap() {
+            if (!markersLayer) return;
             markersLayer.clearLayers();
             if (selectedUserIds.size === 0) return;
 
             const idsArray = Array.from(selectedUserIds);
             const idsParam = idsArray.join(',');
 
-            // Get names for head-to-head legend
             const activeNames = idsArray.map(id => {
                 const u = allUsers.find(user => user.id === id);
                 return u ? u.name : 'User';
@@ -251,20 +281,19 @@
 
                         if (result.mode === 'head-to-head') {
                             if (munro.status === 'both') {
-                                markerColor = '#9ca3af'; // Grey
+                                markerColor = '#9ca3af';
                                 statusLabel = 'Completed by both';
                             } else if (munro.status === 'u1_only') {
-                                markerColor = '#0366d6'; // Blue: User 1 only
+                                markerColor = '#0366d6';
                                 statusLabel = `Completed by ${activeNames[0]} only`;
                             } else if (munro.status === 'u2_only') {
-                                markerColor = '#d97706'; // Orange: User 2 only
+                                markerColor = '#d97706';
                                 statusLabel = `Completed by ${activeNames[1]} only`;
                             } else {
-                                markerColor = '#2ea44f'; // Green: Neither
+                                markerColor = '#2ea44f';
                                 statusLabel = 'Completed by neither';
                             }
                         } else {
-                            // Group mode
                             if (munro.status === 'all') {
                                 markerColor = '#9ca3af';
                                 statusLabel = 'Completed by everyone selected';
@@ -335,8 +364,6 @@
             selectedUserIds.delete(id);
             loadUsers();
         }
-
-        loadUsers();
     </script>
 </body>
 </html>

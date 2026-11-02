@@ -1,6 +1,7 @@
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
 const runScraper = require('./scraper');
+require('dotenv').config();
 
 const app = express();
 const PORT = 2000;
@@ -179,6 +180,10 @@ app.get('/users/compare', (req, res) => {
 
         res.json({ success: true, mode: 'group', totalSelected, data: formattedRows });
     });
+});
+
+app.get('/api/config', (req, res) => {
+    res.json({ osApiKey: process.env.OS_API_KEY || '' });
 });
 
 // POST endpoint to create a new user

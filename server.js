@@ -88,7 +88,6 @@ app.get('/articles', (req, res) => {
     });
 });
 
-// Get aggregated progress for multiple selected users (with head-to-head breakdown for 2 users)
 app.get('/users/compare', (req, res) => {
     const userIdsParam = req.query.ids;
     if (!userIdsParam) {
@@ -100,56 +99,15 @@ app.get('/users/compare', (req, res) => {
         return res.status(400).json({ success: false, error: 'Invalid user IDs' });
     }
 
-    // HEAD-TO-HEAD MODE (Exactly 2 users selected)
-    if (userIds.length === 2) {
-        const [u1, u2] = userIds;
-        const query = `
-            SELECT m.id, m.name, m.area, m.lat, m.lng,
-                   MAX(CASE WHEN um.user_id = ? AND um.status = 'Yes' THEN 1 ELSE 0 END) AS u1_done,
-                   MAX(CASE WHEN um.user_id = ? AND um.status = 'Yes' THEN 1 ELSE 0 END) AS u2_done
-            FROM munros m
-            LEFT JOIN user_munros um ON m.id = um.munro_id AND um.user_id IN (?, ?)
-            GROUP BY m.id
-        `;
-
-        db.all(query, [u1, u2, u1, u2], (err, rows) => {
-            if (err) {
-                console.error('Error in head-to-head comparison:', err.message);
-                return res.status(500).json({ success: false, error: 'Database error' });
-            }
-
-            const formattedRows = rows.map(row => {
-                let status = 'neither';
-                if (row.u1_done && row.u2_done) status = 'both';
-                else if (row.u1_done && !row.u2_done) status = 'u1_only';
-                else if (!row.u1_done && row.u2_done) status = 'u2_only';
-
-                return {
-                    id: row.id,
-                    name: row.name,
-                    area: row.area,
-                    lat: row.lat,
-                    lng: row.lng,
-                    status: status
-                };
-            });
-
-            return res.json({ success: true, mode: 'head-to-head', userIds, data: formattedRows });
-        });
-        return;
-    }
-
-    // MULTI-USER GROUP MODE (1 or 3+ users selected)
     const placeholders = userIds.map(() => '?').join(',');
     const totalSelected = userIds.length;
 
+    // Use GROUP_CONCAT to pull a comma-separated list of user IDs who finished each Munro
     const query = `
-        SELECT m.id, m.name, m.area, m.lat, m.lng,
-               COUNT(CASE WHEN um.status = 'Yes' THEN 1 END) AS completed_by_count
+        SELECT m.id, m.name, m.area, m.height, m.lat, m.lng,
+               GROUP_CONCAT(CASE WHEN um.status = 'Yes' THEN um.user_id END) as completed_users_csv
         FROM munros m
-        LEFT JOIN user_munros um 
-               ON m.id = um.munro_id 
-              AND um.user_id IN (${placeholders})
+        LEFT JOIN user_munros um ON m.id = um.munro_id AND um.user_id IN (${placeholders})
         GROUP BY m.id
     `;
 
@@ -160,25 +118,49 @@ app.get('/users/compare', (req, res) => {
         }
 
         const formattedRows = rows.map(row => {
+            // Convert comma-separated string of IDs into an array of numbers
+            const completedBy = row.completed_users_csv 
+                ? row.completed_users_csv.split(',').map(id => parseInt(id)) 
+                : [];
+
             let status = 'none';
-            if (row.completed_by_count === totalSelected) {
-                status = 'all';
-            } else if (row.completed_by_count > 0) {
-                status = 'some';
+            if (totalSelected === 2) {
+                // Head-to-head mapping logic
+                const [u1, u2] = userIds;
+                const u1Done = completedBy.includes(u1);
+                const u2Done = completedBy.includes(u2);
+
+                if (u1Done && u2Done) status = 'both';
+                else if (u1Done) status = 'u1_only';
+                else if (u2Done) status = 'u2_only';
+                else status = 'neither';
+            } else {
+                // Multi-user / Group mapping logic
+                if (completedBy.length === totalSelected) {
+                    status = 'all';
+                } else if (completedBy.length > 0) {
+                    status = 'some';
+                }
             }
 
             return {
                 id: row.id,
                 name: row.name,
                 area: row.area,
+                height: row.height,
                 lat: row.lat,
                 lng: row.lng,
-                completedByCount: row.completed_by_count,
+                completedBy: completedBy, // Array of user IDs who finished it
                 status: status
             };
         });
 
-        res.json({ success: true, mode: 'group', totalSelected, data: formattedRows });
+        res.json({ 
+            success: true, 
+            mode: totalSelected === 2 ? 'head-to-head' : 'group', 
+            totalSelected, 
+            data: formattedRows 
+        });
     });
 });
 

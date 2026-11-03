@@ -29,7 +29,7 @@ async function syncUserForId(userIdArg) {
         munroRows.forEach(row => munroMap.set(row.name, row.id));
 
         // Use headless: true for web-triggered syncs so it runs smoothly in the background
-        const browser = await chromium.launch({ headless: false });
+        const browser = await chromium.launch({ headless: true });
         const page = await browser.newPage();
         
         await page.goto(targetUrl, { waitUntil: 'domcontentloaded' });
